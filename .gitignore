@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# Real (measured) PV data you may drop in locally - see data/README.md.
+# Not committed: redistribution terms for that dataset are not established.
+data/raw_pv/

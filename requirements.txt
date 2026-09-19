@@ -1,0 +1,17 @@
+# Core
+numpy
+pandas
+matplotlib
+scipy
+requests
+
+# Optimization
+gurobipy>=11        # requires a Gurobi license (free academic licenses available) - see README
+pulp                # open-source fallback solver (bundles CBC), no license needed
+
+# Economics
+numpy_financial
+
+# Notebook execution
+jupyter
+ipykernel
