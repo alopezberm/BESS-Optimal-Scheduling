@@ -2,15 +2,11 @@
 numpy
 pandas
 matplotlib
-scipy
-requests
+requests            # Energinet API access in bess_opt.data
 
-# Optimization
-gurobipy>=11        # requires a Gurobi license (free academic licenses available) - see README
-pulp                # open-source fallback solver (bundles CBC), no license needed
-
-# Economics
-numpy_financial
+# Optimisation
+gurobipy>=11        # requires a licence; the pip-bundled one is size-limited but sufficient here
+pulp                # open-source fallback (bundles the CBC solver) - no licence needed
 
 # Notebook execution
 jupyter

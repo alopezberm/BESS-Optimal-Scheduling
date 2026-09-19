@@ -29,5 +29,7 @@ is deterministic given a seed, and — usefully — can generate arbitrarily man
 which is exactly what the multi-day backtest and scenario-generation sections need.
 
 **If you have your own (legally obtained) measured PV CSV** you'd like to use instead, drop it
-in `data/raw_pv/` (already git-ignored — see `.gitignore`) and point the notebook's `PV_FILE`
-variable at it; the notebook cell that builds `pv_day` is a single, clearly marked line to swap.
+in `data/raw_pv/` (already git-ignored — see `.gitignore`) and load it in place of the call to
+`synthetic_pv_profile` in the notebook's data section. That call appears in exactly two places (the
+reference day and `bess_opt.backtest.solve_day`), and both expect a `pandas.Series` of MW indexed
+by the same 15-minute timestamps.

@@ -1,74 +1,103 @@
 # BESS Optimal Scheduling — Arbitrage, Degradation & Bankability
 
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
-[![Gurobi](https://img.shields.io/badge/optimizer-Gurobi%20%7C%20CBC-orange.svg)](https://www.gurobi.com/)
+[![Solver](https://img.shields.io/badge/solver-Gurobi%20%7C%20CBC-orange.svg)](https://www.gurobi.com/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Data: CC BY 4.0](https://img.shields.io/badge/data-CC--BY%204.0-lightgrey.svg)](data/README.md)
 
-Optimal day-ahead scheduling of a grid-connected battery + PV plant, framed as a linear
-program and solved with Gurobi (with an open-source fallback so anyone can reproduce it
-without a license) — then pushed past "does the LP solve" into the questions that actually
-decide whether a battery project gets built: how fast does it wear out, and at what
-hardware price does it pay for itself?
+Optimal day-ahead scheduling of a grid-connected battery + PV plant, framed as a linear program
+and solved with Gurobi — then pushed past *"does the LP solve"* into the question that actually
+decides whether a battery project gets built: **which operating strategy is worth adopting, and
+how would you know?**
 
-> Grew out of an optimization exercise in DTU course **46765 – Machine Learning for Energy
-> Systems**. The base linear program (charge/discharge/state-of-charge arbitrage) follows
-> that exercise's formulation; everything from the extended formulation onward — direct PV
-> sale, degradation modelling, project economics, stochastic scheduling, the open-source
-> reproducibility check — is my own extension. See [Acknowledgements](#acknowledgements).
+> Grew out of an optimisation exercise in DTU course **46765 – Machine Learning for Energy
+> Systems**. The baseline LP follows that exercise and is reproduced unmodified. Everything from
+> the extended formulation onward is my own work — see [Provenance](#provenance) and
+> [Use of AI](#use-of-ai).
 
-## Why this project
+---
 
-Battery arbitrage notebooks usually stop at "the LP finds a profitable schedule." That's the
-easy 80%. The interesting questions for an actual investment decision are:
+## The argument in one paragraph
 
-- Cycling the battery harder for a few more euros of arbitrage profit — is it worth the wear?
-  A shallow 20→40% cycle and a deep 0→100% cycle move the same energy but do **not** age
-  the cell the same amount.
-- Nobody agrees on what a battery costs installed. So instead of guessing a number, **sweep
-  it**: at what CAPEX (EUR/MWh) does the arbitrage revenue this battery actually earns stop
-  covering its cost?
-- Day-ahead prices and PV are not known in advance. How much is that uncertainty worth?
+A battery does not earn money by being optimally scheduled. It earns money by being optimally
+scheduled *and still being alive in year eight*. The textbook formulation maximises market
+revenue, which means it operates the cells from 0% to 100% state of charge, empties the battery
+at midnight because stored energy is worthless after the last interval, pushes 2.6 MW through a
+2 MW inverter, and cycles as hard as the spread allows because cycling is free. Repair those
+assumptions one at a time, add the cost of a cycle to the objective, and link that cost to the
+asset's remaining life, and the ranking of strategies inverts: **the schedule with the highest
+daily margin turns out to have less than half the project NPV.**
 
-This project builds toward answering all three, on top of a solid, correct LP.
+## Headline results
 
-## Roadmap
+From the run committed in the notebook — 4 MWh / 2 MW LFP system, 1 MW co-located PV behind a
+2 MW connection, 30 random days of DK1 15-minute prices, 6% discount rate. These numbers move
+with the day sample and the price window; the notebook regenerates all of them.
 
-| # | Section | Status |
-|---|---|---|
-| 1 | Problem & motivation | ✅ |
-| 2 | Data: real day-ahead prices (CC-BY, cached) + synthetic PV generator | ✅ |
-| 3 | Mathematical formulation — baseline + extended | ✅ |
-| 4 | Baseline model (faithful to the course formulation) | ✅ |
-| 5 | Extended model: direct PV sale, curtailment, degradation cost in the objective | ✅ |
-| 6 | Multi-day backtest | ✅ |
-| 7 | Battery cycling & degradation analysis (throughput **and** depth-of-discharge aware) | ✅ (v1, simplified stress curve) |
-| 8 | Project economics: CAPEX sweep → NPV, IRR, LCOS, break-even CAPEX | ✅ (v1, flat-revenue assumption) |
-| 9 | Reproducibility: identical LP solved with an open-source solver (PuLP/CBC) | ✅ |
-| 10 | Stochastic scheduling under price & PV scenarios (the course's optional, unsolved extension) | ✅ (3-scenario, here-and-now schedule) |
-| 11 | Rolling-horizon backtest with realistic forecast error | 📋 planned |
-| 12 | Revenue stacking (arbitrage + frequency reserves) | 📋 planned |
-| 13 | Degradation curves calibrated to real cell datasheets, embedded endogenously (convex piecewise-linear) in the LP | 📋 planned |
-| 14 | Price-forecasting model feeding the rolling-horizon strategy | 📋 planned |
+| Finding | Number |
+|---|---|
+| Gross margin, base case | **777 ± 83 EUR/day** at 0.85 equivalent cycles/day |
+| Cost of a cycle, derived from CAPEX and warranty | **23.4 EUR/MWh** throughput ⇒ a **48 EUR/MWh** break-even spread |
+| Naive "maximise revenue" strategy | +50% daily margin, **2.6-year** asset life, **NPV 240 k€ vs 539 k€** |
+| NPV-maximising price to put on a cycle | **≈ 50 EUR/MWh**, ~2× the textbook value — worth **+17% NPV** |
+| Break-even CAPEX (arbitrage only) | **273 k€/MWh** fixed schedule · **291 k€/MWh** re-optimised |
+| The course baseline's charging schedule | exceeds the inverter rating by **28%** in 17% of intervals |
+| Value of a perfect price forecast (EVPI) | **0.4%** with amplitude uncertainty · **11%** with timing uncertainty |
+| Gurobi vs. open-source CBC on the same LP | agree to **1.6 × 10⁻⁹** relative |
 
-✅ implemented · 🚧 partial/simplified · 📋 future work — see the notebook's closing section
-for the full reasoning behind each planned item.
+Four of these are results the baseline formulation cannot express at all, because it contains
+neither a lifetime nor a cost of capital.
+
+## What is actually in here
+
+**A model with no hidden constants.** 42 parameters, each documented in `config.py` with its
+unit, the range seen in real utility-scale projects, and which way the result moves when it is
+increased. `cfg.summary()` prints the lot. Every realism term is an independent switch, so the
+notebook measures each one's contribution instead of asserting that it matters.
+
+**An LP whose behaviour is traceable to a rule.** The dual of the energy-balance constraint is
+the marginal value of stored energy. Stationarity gives a closed-form trigger condition —
+
+```
+p_sell  ≥  (p_buy + τ_ch + c_degr) / (η_ch·η_dis)  +  τ_dis  +  c_degr
+```
+
+— and the notebook verifies the solver's duals match it to machine precision (1.4 × 10⁻¹⁴). The
+optimiser is not a black box; it is executing a price rule that fits on one line.
+
+**Degradation counted consistently.** Throughput-based and depth-of-discharge-aware costs are
+both expressed in *warranted reference cycles*, which gives a testable property: at an ageing
+exponent of 1 the two are identical by construction, so any divergence at k > 1 is genuinely the
+depth effect rather than a mismatch of units. (A comparison that skips this step reports a
+spurious ~+25% "depth effect" that is pure unit confusion.)
+
+**A fine-tuning workbench.** A strategy *is* a configuration, so comparing strategies means
+solving identical days under different assumptions — same dates, same PV seeds, standard errors
+reported. `experiments.sensitivity()` sweeps any single parameter; `compare_strategies()`
+tabulates any set of them.
+
+**Verification, not assertion.** Every structural claim in the notebook is a machine-checked
+assertion: the generalisation check between baseline and extended model, the duality identities,
+the k = 1 degradation identity, the P&L reconciliation against the solver's own objective, and
+the two-solver cross-check.
 
 ## Repository structure
 
 ```
-bess-optimal-scheduling/
-├── 02_gurobi_exercise.ipynb   # the project notebook - narrative, math, results
+BESS-Optimal-Scheduling/
+├── bess_optimal_scheduling.ipynb   # the project: narrative, mathematics, results
 ├── src/bess_opt/
-│   ├── data.py                # Energinet price fetch+cache, synthetic PV, scenario generator
-│   ├── model.py                # Gurobi: baseline / extended / stochastic LP formulations
-│   ├── model_opensource.py    # PuLP/CBC replica of the extended LP (no license needed)
-│   ├── degradation.py          # equivalent cycles, DoD half-cycle counting, degradation cost
-│   ├── economics.py            # NPV, IRR, LCOS, CAPEX break-even sweep
-│   ├── backtest.py             # multi-day backtesting utilities
-│   └── plotting.py             # shared matplotlib styling
+│   ├── config.py           # THE CONTROL PANEL - every parameter, documented and validated
+│   ├── data.py             # Energinet price fetch + cache; synthetic PV; scenario generation
+│   ├── model.py            # Gurobi: baseline / extended / stochastic / fixed-schedule evaluation
+│   ├── model_opensource.py # PuLP + CBC replica of the extended LP - no licence needed
+│   ├── degradation.py      # cycle counting, ageing law, cost of a cycle
+│   ├── economics.py        # cash flows, NPV/IRR/LCOS, lifetime, break-even CAPEX
+│   ├── backtest.py         # solving many days
+│   ├── experiments.py      # strategy comparison and parameter sweeps
+│   └── plotting.py         # figure styling and the recurring plots
 ├── data/
-│   ├── spot_prices_dk1.csv    # cached Energinet prices (CC-BY 4.0, see data/README.md)
+│   ├── spot_prices_dk1.csv # cached Energinet prices (CC-BY 4.0 - see data/README.md)
 │   └── README.md
 ├── requirements.txt
 └── LICENSE
@@ -77,53 +106,73 @@ bess-optimal-scheduling/
 ## Quickstart
 
 ```bash
-python -m venv .venv && source .venv/bin/activate   # or .venv\Scripts\activate on Windows
+python -m venv .venv && .venv\Scripts\activate   # or: source .venv/bin/activate
 pip install -r requirements.txt
-jupyter notebook 02_gurobi_exercise.ipynb
+jupyter notebook bess_optimal_scheduling.ipynb
 ```
 
-No Gurobi license? Run the notebook as-is up to the reproducibility section, or use
-`src/bess_opt/model_opensource.py` directly — it solves the identical extended LP with the
-open-source CBC solver PuLP ships with.
+**No Gurobi licence?** `src/bess_opt/model_opensource.py` solves the identical extended LP with
+the open-source CBC solver bundled with PuLP. The notebook cross-checks the two and asserts they
+agree, so no result here depends on holding a licence.
 
-## Formulation at a glance
+**Changing assumptions** means editing the control-panel cell near the top of the notebook and
+re-running. Nothing downstream hard-codes a parameter, and inconsistent configurations raise on
+construction rather than quietly producing an optimistic schedule.
 
-15-minute resolution, one day, `T = 96` intervals. Decision variables per interval `t`:
-charge power `P_ch[t]`, discharge power `P_dis[t]`, PV routed directly to the grid
-`P_pv_direct[t]`, PV curtailed `P_pv_curt[t]`, and state of charge `E[t]`. Maximizing
+## Methodological points worth flagging
 
-```
-Σ_t  price[t] · (P_dis[t] + P_pv_direct[t] − P_ch[t]) · Δt   −   c_degr · Σ_t (P_ch[t] + P_dis[t]) · Δt
-```
+Three corrections made during this work, recorded because they are easy mistakes and each one
+moves the answer materially:
 
-subject to the battery's energy balance, power/energy limits, and the PV split
-`P_pv_direct[t] + P_pv_to_batt[t] + P_pv_curt[t] = P_pv[t]`. Full derivation, the baseline
-(course) formulation it extends, and the stochastic variant are in the notebook.
+- **Unit anchoring in degradation.** Comparing a throughput-based cost against a depth-aware one
+  without expressing both in the same unit cycle manufactures a ~25% "depth effect" out of the
+  reference DoD alone.
+- **Double counting in the DCF.** Degradation is an opportunity cost in the *operating* problem
+  and is the CAPEX in the *investment* problem. Deducting an annual degradation charge from the
+  operating margin *and* booking the CAPEX at year zero charges the same asset twice. Here it
+  appears once, and shows up in the cash flows as a shortened life.
+- **Integer asset life.** Rounding a degradation-limited lifetime to whole years makes NPV jump
+  discontinuously as a parameter is swept — by enough to invert the ranking of two strategies.
+  The final period is fractional.
 
-## Example results
+## Limitations
 
-From the run this project ships with (30 random days, DK1 Oct-2025–Sep-2026 prices,
-`E_max = 4 MWh`, `P_max = 2 MW`, `η = 0.97`, 6% discount rate, 12-year lifetime — see the
-notebook outputs; these numbers move with the random day sample and the price data window):
+Arbitrage revenue only (no reserve markets, which for a real BESS are often the larger share);
+perfect foresight within each day, so every revenue figure is an upper bound; a price-taking
+assumption; an ageing exponent that is swept rather than calibrated; peak-valley rather than full
+rainflow cycle counting; synthetic PV uncorrelated with the price series; no mid-life
+augmentation; and a 30-day sample of one bidding zone. Section 14 of the notebook states each of
+these with its direction of bias, and the roadmap orders the fixes by how much they would change
+the conclusions.
 
-- Mean daily arbitrage profit ≈ **1,154 EUR/day** at ~2.9 equivalent full cycles/day
-  (correlation between daily profit and price volatility: **0.73**, as expected for an
-  arbitrage strategy).
-- Break-even battery CAPEX for arbitrage-only revenue: **≈ 263,000 EUR/MWh** — in the right
-  ballpark of real utility-scale BESS installed costs, a reassuring sanity check on the whole
-  model chain, not just a number to report. At an illustrative 150,000 EUR/MWh CAPEX: **44.9%
-  IRR**, **2.2-year** simple payback, **18.2 EUR/MWh** LCOS.
-- The depth-of-discharge-aware degradation cost was **+34%** relative to the naive
-  throughput-only estimate on the reference day — i.e. *how* a given amount of energy is
-  cycled matters, not just how much.
-- Value of perfect day-ahead information (EVPI, Section 10): **≈ 158 EUR/day (15%)** above
-  the best single here-and-now schedule — a concrete price on the uncertainty this project
-  otherwise optimizes under.
+## Provenance
 
-## Acknowledgements
+The problem statement and the baseline LP follow the DTU 46765 BESS day-ahead scheduling
+exercise, reproduced unmodified in `bess_opt.model.build_bess_lp`. Everything else — the extended
+formulation and its switchable realism terms, the duality analysis, the degradation model, the
+experiment framework and the cycle-price tuning result, the lifetime-linked economics, the
+open-source cross-check, and the stochastic implementation with EVPI and VSS — was developed
+independently for this project.
 
-The problem statement and the baseline LP (arbitrage-only, PV forced through the battery)
-follow an exercise from DTU's course *46765 – Machine Learning for Energy Systems*. Day-ahead
-price data is © Energinet, CC-BY 4.0 (see `data/README.md`). Everything else — the extended
-formulation, degradation and economics modules, the open-source reproducibility check, and
-the stochastic scheduling implementation — was built independently for this project.
+Day-ahead price data: © **Energinet**, [Energi Data Service](https://www.energidataservice.dk/),
+CC-BY 4.0. PV production is synthetic; `data/README.md` explains why.
+
+## Use of AI
+
+In line with DTU's rules on the use of generative AI in coursework, stated explicitly rather than
+left to inference.
+
+I used **Claude (Anthropic)** as a pair-programming and editing assistant while building this
+project: refactoring the codebase into documented modules, drafting and revising explanatory
+prose, and reviewing the implementation for errors. The three methodological corrections listed
+above were identified during that review.
+
+What AI did not do is decide what this project should investigate or what its results mean. The
+modelling choices, the parameter values, the interpretation of every result, and the judgement
+about which simplifications are acceptable are mine, and I can defend each of them. Every
+numerical claim is produced by the code in this repository and reproduced by re-running it.
+
+## License
+
+Code: MIT (see `LICENSE`). Price data: CC-BY 4.0, © Energinet — attribution as required in
+`data/README.md`.
